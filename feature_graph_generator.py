@@ -63,7 +63,7 @@ def get_args():
         dest="skip",
         choices=["tval", "rf", "corr", "joy"],
         help="optional flag to skip generating certain graphs. May be called multiple times",
-        default=False,
+        default=[],
     )
 
     # executing the parse_args command
@@ -107,10 +107,69 @@ def cat_cont_correlation_ratio(categories, values):
 
 
 def correlation_bar_plots(df, outfile, class_list, show):
-    for classification in class_list:
 
-        # set up empty dictionary
-        correlation_ratios = {}
+    # get a list of the name of each feature if the first value in the dataframe in the target column is a number
+    features_list = [x for x in df.columns.to_list() if type(df[x][0]) == np.float64 or type(df[x][0]) == np.int64]
+    # sort it alphabetically ignoring case
+    features_list = sorted(features_list, key=str.lower)
+
+    # set up an empty array for correlation values. Rows = classes, Columns = features
+    correlation_array = np.zeros((len(class_list), len(features_list)))
+
+    for i in range(len(class_list)):
+        classification = class_list[i]
+
+        # figure out which rows are the correct classification
+        is_target_class = [
+            True if x == classification else False for x in df["classification"]
+        ]
+
+        # loop through each feature from the list
+        for ii in range(len(features_list)):
+            feature = features_list[ii]
+            # run the correlation function between it and the classification column
+            correlation_array[i][ii] = round(
+                cat_cont_correlation_ratio(is_target_class, df[feature]), 5
+            )
+
+    correlation_plot = go.Figure(
+            data=go.Heatmap(z=correlation_array,
+                            x=features_list,
+                            y=class_list,
+                            hoverongaps=False, colorscale='Plasma'),
+    )
+
+    correlation_plot.update_layout(
+        xaxis_title="Features",
+        yaxis_title="Phage Protein Class",
+        title_text=f"Correlation Ratios",
+        font=dict(size=12),
+    )
+    correlation_plot.update_xaxes(tickangle=45, tickfont=dict(size=12))
+
+    correlation_plot.write_html(
+        file=f"{outfile}/correlation heatplot.html",
+        include_plotlyjs=True,
+    )
+
+    if show:
+        correlation_plot.show()
+
+    return
+
+
+def t_value_bar_plots(df, outfile, class_list, show):
+
+    # get a list of the name of each feature if the first value in the dataframe in the target column is a number
+    features_list = [x for x in df.columns.to_list() if type(df[x][0]) == np.float64 or type(df[x][0]) == np.int64]
+    # sort it alphabetically ignoring case
+    features_list = sorted(features_list, key=str.lower)
+
+    # set up an empty array for correlation values. Rows = classes, Columns = features
+    tval_array = np.zeros((len(class_list), len(features_list)))
+
+    for i in range(len(class_list)):
+        classification = class_list[i]
 
         # figure out which rows are the correct classification
         is_target_class = [
@@ -118,47 +177,48 @@ def correlation_bar_plots(df, outfile, class_list, show):
         ]
 
         # loop through each column in the data frame and check if the first row value is a number of some kind
-        for feature in df.columns.to_list():
+        for ii in range(len(features_list)):
+            feature = features_list[ii]
             if type(df[feature][0]) == np.float64 or type(df[feature][0]) == np.int64:
-                # if it is, run the correlation function between it and the classification column
-                correlation_ratios[feature] = round(
-                    cat_cont_correlation_ratio(is_target_class, df[feature]), 5
+                # if it is, get the t-value. Following code was provided by Julien.
+                predictor = statsmodels.api.add_constant(df[feature].to_numpy())
+
+                logistic_regression_model = statsmodels.api.Logit(
+                    is_target_class, predictor
                 )
+                logistic_regression_fitted = logistic_regression_model.fit(disp=False)
 
-        # set x and y values for plotting
-        x_axis = list(correlation_ratios.keys())
-        y_axis = list(correlation_ratios.values())
+                t_value = round(logistic_regression_fitted.tvalues[1], 4)
+                tval_array[i][ii] = abs(t_value)
 
-        # sort alphabetically using zip sort and then return data to list format
-        x_axis, y_axis = zip(*sorted(zip(x_axis, y_axis)))
-        x_axis, y_axis = list(x_axis), list(y_axis)
+    t_val_plot = go.Figure(
+        data=go.Heatmap(z=tval_array,
+                        x=features_list,
+                        y=class_list,
+                        hoverongaps=False, colorscale='Plasma'),
+    )
 
-        # set up correlation plot with layout options
-        correlation_plot = go.Figure(
-            [
-                go.Bar(
-                    x=x_axis, y=y_axis, marker={"color": y_axis, "colorscale": "Burg"}
-                ),
-            ]
-        )
-        correlation_plot.update_layout(
-            xaxis_title="Features",
-            yaxis_title="Correlation Ratio",
-            title_text=f"correlation ratios - {classification}",
-            font=dict(size=12),
-        )
-        correlation_plot.update_xaxes(tickangle=45, tickfont=dict(size=10))
-        correlation_plot.write_html(
-            file=f"{outfile}/{classification} correlation plot.html",
-            include_plotlyjs=True,
-        )
+    t_val_plot.update_layout(
+        xaxis_title="Features",
+        yaxis_title="Phage Protein Class",
+        title_text=f"T-Values",
+        font=dict(size=12),
+    )
+    t_val_plot.update_xaxes(tickangle=45, tickfont=dict(size=12))
 
-        if show:
-            correlation_plot.show()
+
+    t_val_plot.write_html(
+        file=f"{outfile}/t-value heatplot.html",
+        include_plotlyjs=True,
+    )
+
+    if show:
+        t_val_plot.show()
+
     return
 
 
-def t_value_bar_plots(df, outfile, class_list, show):
+def t_value_bar_plots_old(df, outfile, class_list, show):
     for classification in class_list:
 
         # set up empty dictionary
@@ -320,7 +380,7 @@ def main():
     # open dataframe from csv
     if verbose:
         print(f"Reading in data from {infile}")
-    df = pandas.read_csv(infile).dropna(axis=0).reset_index()
+    df = pandas.read_csv(infile, engine='python').dropna(axis=0).reset_index()
     if "index" in df.columns.to_list():
         df.drop("index", axis=1, inplace=True)
 
@@ -328,7 +388,7 @@ def main():
     if classes is None:
         if verbose:
             print("No class list provided. Using ALL classes")
-        classes = set(df["classification"].values)
+        classes = list(set(df["classification"].values))
 
     # generate joy plots for each feature
     if "joy" not in skip:
